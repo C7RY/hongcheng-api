@@ -1,4 +1,4 @@
-export default async function handler(req, res) {
+module.exports = async function handler(req, res) {
   const url = new URL(req.url, `http://${req.headers.host}`);
   
   if (url.pathname === "/test") {
@@ -24,4 +24,4 @@ export default async function handler(req, res) {
   }
   
   return res.status(404).json({ error: "Not Found" });
-}
+};
