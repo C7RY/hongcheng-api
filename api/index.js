@@ -1,27 +1,50 @@
-module.exports = async function handler(req, res) {
-  const url = new URL(req.url, `http://${req.headers.host}`);
+const http = require('http');
+const url = require('url');
+
+const server = http.createServer((req, res) => {
+  const parsedUrl = url.parse(req.url, true);
   
-  if (url.pathname === "/test") {
-    return res.status(200).json({ status: "ok", message: "Vercel API 运行正常" });
+  // 设置 CORS 头
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Content-Type', 'application/json');
+  
+  // 处理 /test 请求
+  if (parsedUrl.pathname === '/test') {
+    res.statusCode = 200;
+    res.end(JSON.stringify({ status: "ok", message: "Railway API 运行正常" }));
+    return;
   }
   
-  if (url.pathname === "/start_valve") {
-    const type = url.searchParams.get("type") || "water";
-    const duration = url.searchParams.get("duration") || "30";
-    return res.status(200).json({
+  // 处理 /start_valve 请求
+  if (parsedUrl.pathname === '/start_valve') {
+    const type = parsedUrl.query.type || "water";
+    const duration = parsedUrl.query.duration || "30";
+    res.statusCode = 200;
+    res.end(JSON.stringify({
       status: "ok",
       message: `模拟开启 ${type} 阀，持续 ${duration} 分钟`,
       type: type,
       duration: duration
-    });
+    }));
+    return;
   }
   
-  if (url.pathname === "/close_valve") {
-    return res.status(200).json({
+  // 处理 /close_valve 请求
+  if (parsedUrl.pathname === '/close_valve') {
+    res.statusCode = 200;
+    res.end(JSON.stringify({
       status: "ok",
       message: "阀门已手动关闭"
-    });
+    }));
+    return;
   }
   
-  return res.status(404).json({ error: "Not Found" });
-};
+  // 404
+  res.statusCode = 404;
+  res.end(JSON.stringify({ error: "Not Found" }));
+});
+
+const port = process.env.PORT || 3000;
+server.listen(port, () => {
+  console.log(`Server running on port ${port}`);
+});
