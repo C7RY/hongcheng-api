@@ -10,6 +10,13 @@ const server = http.createServer((req, res) => {
   
   console.log(`收到请求: ${req.url}`);
   
+  // 处理根路径
+  if (parsedUrl.pathname === '/') {
+    res.statusCode = 200;
+    res.end(JSON.stringify({ status: "ok", message: "API 服务运行正常" }));
+    return;
+  }
+  
   // 处理 /test 请求
   if (parsedUrl.pathname === '/test') {
     res.statusCode = 200;
