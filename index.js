@@ -1,302 +1,308 @@
 const http = require('http');
 const url = require('url');
 
-// 存储各区域各阀门的倒计时状态
-// 结构: { "zone_1_water": { timer: null, endTime: null }, "zone_1_fert": {...} }
+// 存储每个区域每个阀门的倒计时状态
+// 结构: { "zone_1": { "water": { active: false, endTime: null, timer: null }, "fert": {...} }, ... }
 const valveState = {};
 
-// 生成HTML页面
-function generateHTML(zoneId, valveType, status, remainingSeconds = 0) {
-  const valveName = valveType === 'water' ? '水阀' : '肥阀';
-  const isRunning = status === 'running';
+// 初始化6个区域的状态
+for (let i = 1; i <= 6; i++) {
+  valveState[`zone_${i}`] = {
+    water: { active: false, endTime: null, timer: null },
+    fert: { active: false, endTime: null, timer: null }
+  };
+}
+
+// 设置倒计时
+function startTimer(zoneId, valveType, durationMinutes) {
+  const state = valveState[zoneId][valveType];
   
-  return `
-<!DOCTYPE html>
+  // 清除已有定时器
+  if (state.timer) {
+    clearTimeout(state.timer);
+  }
+  
+  const endTime = Date.now() + durationMinutes * 60 * 1000;
+  state.active = true;
+  state.endTime = endTime;
+  
+  // 设置自动关闭定时器
+  state.timer = setTimeout(() => {
+    state.active = false;
+    state.endTime = null;
+    state.timer = null;
+    console.log(`${zoneId} ${valveType} 阀门自动关闭`);
+  }, durationMinutes * 60 * 1000);
+  
+  console.log(`${zoneId} ${valveType} 阀门已开启，将在 ${durationMinutes} 分钟后自动关闭`);
+}
+
+// 停止倒计时
+function stopTimer(zoneId, valveType) {
+  const state = valveState[zoneId][valveType];
+  if (state.timer) {
+    clearTimeout(state.timer);
+  }
+  state.active = false;
+  state.endTime = null;
+  state.timer = null;
+  console.log(`${zoneId} ${valveType} 阀门已手动关闭`);
+}
+
+// 生成HTML页面
+function generateHTML(zonesData) {
+  // zonesData 包含每个区域的各项指标和标准范围
+  // 用于在页面上显示区域状态
+  
+  let rows = '';
+  for (let i = 1; i <= 6; i++) {
+    const zoneId = `zone_${i}`;
+    const waterState = valveState[zoneId].water;
+    const fertState = valveState[zoneId].fert;
+    
+    const waterBtnText = waterState.active ? '关闭水阀' : '开启水阀';
+    const waterBtnClass = waterState.active ? 'btn-close' : 'btn-open';
+    const waterStatus = waterState.active ? `<span class="status-on">已开启 ${Math.ceil((waterState.endTime - Date.now()) / 60000)} 分钟后自动关闭</span>` : '<span class="status-off">已关闭</span>';
+    
+    const fertBtnText = fertState.active ? '关闭肥阀' : '开启肥阀';
+    const fertBtnClass = fertState.active ? 'btn-close' : 'btn-open';
+    const fertStatus = fertState.active ? `<span class="status-on">已开启 ${Math.ceil((fertState.endTime - Date.now()) / 60000)} 分钟后自动关闭</span>` : '<span class="status-off">已关闭</span>';
+    
+    rows += `
+      <div class="zone-card">
+        <h3>${zoneId.toUpperCase()}</h3>
+        <div class="zone-data">
+          ${zonesData?.zoneData?.[zoneId] || ''}
+        </div>
+        <div class="valve-control">
+          <div class="valve-item">
+            <span>💧 水阀：</span>
+            <button class="${waterBtnClass}" onclick="controlValve('${zoneId}', 'water')">${waterBtnText}</button>
+            ${waterStatus}
+          </div>
+          <div class="valve-item">
+            <span>🌿 肥阀：</span>
+            <button class="${fertBtnClass}" onclick="controlValve('${zoneId}', 'fert')">${fertBtnText}</button>
+            ${fertStatus}
+          </div>
+        </div>
+      </div>
+    `;
+  }
+  
+  return `<!DOCTYPE html>
 <html>
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>${zoneId} - ${valveName}控制</title>
-    <style>
-        body {
-            font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-            max-width: 500px;
-            margin: 50px auto;
-            padding: 20px;
-            background: linear-gradient(135deg, #f5f7fa 0%, #e9ecef 100%);
-        }
-        .card {
-            background: white;
-            border-radius: 20px;
-            padding: 30px;
-            box-shadow: 0 10px 40px rgba(0,0,0,0.1);
-            text-align: center;
-        }
-        h2 {
-            color: #2d6a4f;
-            margin-bottom: 10px;
-        }
-        .zone-badge {
-            background: #1b4332;
-            color: white;
-            padding: 8px 16px;
-            border-radius: 25px;
-            display: inline-block;
-            font-size: 14px;
-            margin-bottom: 20px;
-        }
-        .status {
-            font-size: 18px;
-            margin: 20px 0;
-            padding: 15px;
-            border-radius: 12px;
-        }
-        .status-running {
-            background: #d8f3dc;
-            color: #1b4332;
-            border: 1px solid #2d6a4f;
-        }
-        .status-idle {
-            background: #f8f9fa;
-            color: #6c757d;
-            border: 1px solid #dee2e6;
-        }
-        .timer {
-            font-size: 48px;
-            font-weight: bold;
-            font-family: monospace;
-            margin: 20px 0;
-            color: #2d6a4f;
-        }
-        button {
-            background: #2d6a4f;
-            color: white;
-            border: none;
-            padding: 14px 28px;
-            font-size: 18px;
-            border-radius: 30px;
-            cursor: pointer;
-            transition: all 0.2s;
-            margin: 10px;
-            font-weight: 600;
-        }
-        button:hover {
-            background: #1b4332;
-            transform: scale(1.02);
-        }
-        button:active {
-            transform: scale(0.98);
-        }
-        .stop-btn {
-            background: #dc3545;
-        }
-        .stop-btn:hover {
-            background: #b02a37;
-        }
-        .note {
-            margin-top: 20px;
-            font-size: 12px;
-            color: #6c757d;
-        }
-    </style>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>廉江红橙智慧农场 - 阀门控制系统</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: #f0f4e8;
+      padding: 20px;
+      color: #2c3e2f;
+    }
+    .container { max-width: 1200px; margin: 0 auto; }
+    h1 {
+      font-size: 24px;
+      margin-bottom: 10px;
+      color: #2e7d32;
+      text-align: center;
+    }
+    .subtitle {
+      text-align: center;
+      color: #666;
+      margin-bottom: 30px;
+      font-size: 14px;
+    }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));
+      gap: 20px;
+    }
+    .zone-card {
+      background: white;
+      border-radius: 16px;
+      padding: 18px;
+      box-shadow: 0 2px 10px rgba(0,0,0,0.05);
+      border: 1px solid #d9e2d0;
+    }
+    .zone-card h3 {
+      font-size: 18px;
+      margin-bottom: 12px;
+      padding-bottom: 8px;
+      border-bottom: 2px solid #c8e6c9;
+      color: #1b5e20;
+    }
+    .zone-data {
+      background: #f8faf6;
+      border-radius: 12px;
+      padding: 12px;
+      margin-bottom: 16px;
+      font-size: 13px;
+      line-height: 1.6;
+      color: #333;
+    }
+    .valve-control {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+    .valve-item {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      flex-wrap: wrap;
+      padding: 8px 0;
+      border-top: 1px solid #eee;
+    }
+    .valve-item span:first-child { width: 50px; font-weight: 500; }
+    button {
+      padding: 8px 20px;
+      border: none;
+      border-radius: 24px;
+      font-size: 14px;
+      font-weight: 500;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+    .btn-open {
+      background: #2e7d32;
+      color: white;
+    }
+    .btn-open:hover { background: #1b5e20; }
+    .btn-close {
+      background: #d32f2f;
+      color: white;
+    }
+    .btn-close:hover { background: #b71c1c; }
+    .status-on { color: #2e7d32; font-size: 12px; background: #e8f5e9; padding: 4px 10px; border-radius: 20px; }
+    .status-off { color: #999; font-size: 12px; background: #f5f5f5; padding: 4px 10px; border-radius: 20px; }
+    .refresh-note {
+      text-align: center;
+      margin-top: 30px;
+      font-size: 12px;
+      color: #aaa;
+    }
+    @media (max-width: 700px) {
+      .grid { grid-template-columns: 1fr; }
+      .valve-item { flex-direction: column; align-items: flex-start; }
+      .valve-item span:first-child { width: auto; }
+    }
+  </style>
 </head>
 <body>
-    <div class="card">
-        <div class="zone-badge">${zoneId}</div>
-        <h2>${valveName}控制系统</h2>
-        
-        <div class="status ${isRunning ? 'status-running' : 'status-idle'}">
-            ${isRunning ? '⚡ 阀门已开启' : '⏸️ 阀门已关闭'}
-        </div>
-        
-        ${isRunning ? `
-        <div class="timer">剩余: <span id="countdown">${formatTime(remainingSeconds)}</span></div>
-        ` : ''}
-        
-        <div>
-            ${!isRunning ? `
-            <button onclick="startValve()">▶ 开启阀门</button>
-            ` : `
-            <button class="stop-btn" onclick="stopValve()">⏹️ 立即关闭</button>
-            `}
-        </div>
-        
-        <div class="note">
-            ⏰ 开启后自动倒计时30分钟<br>
-            💡 手动关闭后自动计时清零
-        </div>
-    </div>
-    
-    <script>
-        function formatTime(seconds) {
-            const mins = Math.floor(seconds / 60);
-            const secs = seconds % 60;
-            return \`\${mins.toString().padStart(2, '0')}:\${secs.toString().padStart(2, '0')}\`;
-        }
-        
-        async function startValve() {
-            const resp = await fetch('/api/start?zone=${zoneId}&type=${valveType}');
-            const data = await resp.json();
-            if (data.status === 'ok') {
-                location.reload();
-            }
-        }
-        
-        async function stopValve() {
-            const resp = await fetch('/api/stop?zone=${zoneId}&type=${valveType}');
-            const data = await resp.json();
-            if (data.status === 'ok') {
-                location.reload();
-            }
-        }
-        
-        ${isRunning ? `
-        let remaining = ${remainingSeconds};
-        const timerElement = document.getElementById('countdown');
-        const interval = setInterval(() => {
-            if (remaining <= 1) {
-                clearInterval(interval);
-                if (timerElement) timerElement.textContent = '00:00';
-                setTimeout(() => location.reload(), 2000);
-            } else {
-                remaining--;
-                if (timerElement) timerElement.textContent = formatTime(remaining);
-            }
-        }, 1000);
-        ` : ''}
-    </script>
+<div class="container">
+  <h1>🍊 廉江红橙智慧农场</h1>
+  <div class="subtitle">阀门远程控制系统 | 点击按钮开启/关闭 | 30分钟后自动关闭</div>
+  <div class="grid" id="zonesGrid">
+    ${rows}
+  </div>
+  <div class="refresh-note">⏰ 页面每30秒自动刷新状态 | 阀门开启后倒计时自动运行</div>
+</div>
+
+<script>
+  async function controlValve(zoneId, valveType) {
+    const response = await fetch('/control', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ zoneId, valveType })
+    });
+    const result = await response.json();
+    if (result.success) {
+      location.reload();
+    } else {
+      alert('操作失败：' + result.message);
+    }
+  }
+  
+  // 每30秒自动刷新页面，更新倒计时显示
+  setTimeout(() => {
+    location.reload();
+  }, 30000);
+</script>
 </body>
 </html>`;
-}
-
-function formatTime(seconds) {
-  const mins = Math.floor(seconds / 60);
-  const secs = seconds % 60;
-  return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
-}
-
-// 获取阀门状态标识
-function getStateKey(zoneId, valveType) {
-  return `${zoneId}_${valveType}`;
 }
 
 const server = http.createServer(async (req, res) => {
   const parsedUrl = url.parse(req.url, true);
   
+  // 设置CORS和内容类型
   res.setHeader('Access-Control-Allow-Origin', '*');
   
-  console.log(`收到请求: ${req.url}`);
+  console.log(`收到请求: ${req.method} ${req.url}`);
   
-  // API: 开启阀门
-  if (parsedUrl.pathname === '/api/start') {
-    const zoneId = parsedUrl.query.zone;
-    const valveType = parsedUrl.query.type;
-    
-    if (!zoneId || !valveType) {
-      res.writeHead(400, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ error: '缺少参数 zone 或 type' }));
-      return;
+  // GET / - 返回控制面板HTML
+  if (req.method === 'GET' && parsedUrl.pathname === '/') {
+    res.setHeader('Content-Type', 'text/html; charset=utf-8');
+    // 如果有区域数据传入，可以在这里解析query参数
+    // 格式: /?zoneData=编码后的JSON
+    let zonesData = null;
+    if (parsedUrl.query.data) {
+      try {
+        zonesData = JSON.parse(decodeURIComponent(parsedUrl.query.data));
+      } catch(e) {}
     }
-    
-    const key = getStateKey(zoneId, valveType);
-    const duration = 30 * 60; // 30分钟 = 1800秒
-    const endTime = Date.now() + duration * 1000;
-    
-    // 清除之前的定时器
-    if (valveState[key] && valveState[key].timer) {
-      clearTimeout(valveState[key].timer);
-    }
-    
-    // 设置新的定时器
-    const timer = setTimeout(() => {
-      console.log(`${zoneId} ${valveType} 自动关闭`);
-      if (valveState[key]) {
-        valveState[key].status = 'idle';
-        valveState[key].timer = null;
-        valveState[key].endTime = null;
+    res.end(generateHTML(zonesData));
+    return;
+  }
+  
+  // POST /control - 阀门控制API
+  if (req.method === 'POST' && parsedUrl.pathname === '/control') {
+    let body = '';
+    req.on('data', chunk => { body += chunk; });
+    req.on('end', () => {
+      try {
+        const { zoneId, valveType } = JSON.parse(body);
+        
+        if (!zoneId || !valveState[zoneId]) {
+          res.end(JSON.stringify({ success: false, message: '区域不存在' }));
+          return;
+        }
+        if (valveType !== 'water' && valveType !== 'fert') {
+          res.end(JSON.stringify({ success: false, message: '阀门类型错误' }));
+          return;
+        }
+        
+        const currentState = valveState[zoneId][valveType];
+        
+        if (currentState.active) {
+          // 当前已开启，执行关闭
+          stopTimer(zoneId, valveType);
+          res.end(JSON.stringify({ success: true, message: `已关闭${valveType === 'water' ? '水阀' : '肥阀'}` }));
+        } else {
+          // 当前已关闭，执行开启（30分钟倒计时）
+          startTimer(zoneId, valveType, 30);
+          res.end(JSON.stringify({ success: true, message: `已开启${valveType === 'water' ? '水阀' : '肥阀'}，30分钟后自动关闭` }));
+        }
+      } catch(e) {
+        res.end(JSON.stringify({ success: false, message: '请求格式错误' }));
       }
-    }, duration * 1000);
-    
-    valveState[key] = {
-      status: 'running',
-      timer: timer,
-      endTime: endTime
-    };
-    
-    res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ status: 'ok', message: `${zoneId} ${valveType} 已开启` }));
+    });
     return;
   }
   
-  // API: 关闭阀门
-  if (parsedUrl.pathname === '/api/stop') {
-    const zoneId = parsedUrl.query.zone;
-    const valveType = parsedUrl.query.type;
-    
-    if (!zoneId || !valveType) {
-      res.writeHead(400, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ error: '缺少参数 zone 或 type' }));
-      return;
+  // GET /status - 获取所有阀门状态（API）
+  if (req.method === 'GET' && parsedUrl.pathname === '/status') {
+    const status = {};
+    for (const zoneId in valveState) {
+      status[zoneId] = {
+        water: { active: valveState[zoneId].water.active, remainingMinutes: valveState[zoneId].water.active ? Math.max(0, Math.ceil((valveState[zoneId].water.endTime - Date.now()) / 60000)) : 0 },
+        fert: { active: valveState[zoneId].fert.active, remainingMinutes: valveState[zoneId].fert.active ? Math.max(0, Math.ceil((valveState[zoneId].fert.endTime - Date.now()) / 60000)) : 0 }
+      };
     }
-    
-    const key = getStateKey(zoneId, valveType);
-    
-    if (valveState[key] && valveState[key].timer) {
-      clearTimeout(valveState[key].timer);
-      valveState[key].status = 'idle';
-      valveState[key].timer = null;
-      valveState[key].endTime = null;
-    }
-    
-    res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ status: 'ok', message: `${zoneId} ${valveType} 已关闭` }));
+    res.setHeader('Content-Type', 'application/json');
+    res.end(JSON.stringify({ success: true, status }));
     return;
   }
   
-  // 页面: 水阀控制页
-  if (parsedUrl.pathname === '/water') {
-    const zoneId = parsedUrl.query.zone || 'zone_1';
-    const key = getStateKey(zoneId, 'water');
-    let status = 'idle';
-    let remaining = 0;
-    
-    if (valveState[key] && valveState[key].status === 'running') {
-      status = 'running';
-      remaining = Math.max(0, Math.floor((valveState[key].endTime - Date.now()) / 1000));
-    }
-    
-    res.writeHead(200, { 'Content-Type': 'text/html' });
-    res.end(generateHTML(zoneId, 'water', status, remaining));
-    return;
-  }
-  
-  // 页面: 肥阀控制页
-  if (parsedUrl.pathname === '/fert') {
-    const zoneId = parsedUrl.query.zone || 'zone_1';
-    const key = getStateKey(zoneId, 'fert');
-    let status = 'idle';
-    let remaining = 0;
-    
-    if (valveState[key] && valveState[key].status === 'running') {
-      status = 'running';
-      remaining = Math.max(0, Math.floor((valveState[key].endTime - Date.now()) / 1000));
-    }
-    
-    res.writeHead(200, { 'Content-Type': 'text/html' });
-    res.end(generateHTML(zoneId, 'fert', status, remaining));
-    return;
-  }
-  
-  // 测试接口
-  if (parsedUrl.pathname === '/test') {
-    res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ status: "ok", message: "Railway API 运行正常" }));
-    return;
-  }
-  
-  // 404
-  res.writeHead(404, { 'Content-Type': 'application/json' });
-  res.end(JSON.stringify({ error: "Not Found" }));
+  // 其他请求返回404
+  res.statusCode = 404;
+  res.setHeader('Content-Type', 'application/json');
+  res.end(JSON.stringify({ error: 'Not Found' }));
 });
 
 const port = process.env.PORT || 3000;
