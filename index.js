@@ -4,7 +4,6 @@ const url = require('url');
 const server = http.createServer((req, res) => {
   const parsedUrl = url.parse(req.url, true);
   
-  // 设置响应头
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Content-Type', 'application/json');
   
@@ -17,33 +16,57 @@ const server = http.createServer((req, res) => {
     return;
   }
   
-  // 处理 /test 请求
+  // 测试接口
   if (parsedUrl.pathname === '/test') {
     res.statusCode = 200;
     res.end(JSON.stringify({ status: "ok", message: "Railway API 运行正常" }));
     return;
   }
   
-  // 处理 /start_valve 请求
-  if (parsedUrl.pathname === '/start_valve') {
-    const type = parsedUrl.query.type || "water";
+  // ========== 水阀控制 ==========
+  // 开启水阀
+  if (parsedUrl.pathname === '/start_water_valve') {
     const duration = parsedUrl.query.duration || "30";
     res.statusCode = 200;
     res.end(JSON.stringify({
       status: "ok",
-      message: `模拟开启 ${type} 阀，持续 ${duration} 分钟`,
-      type: type,
+      message: `✅ 水阀已开启，将在 ${duration} 分钟后自动关闭`,
+      type: "water",
       duration: duration
     }));
     return;
   }
   
-  // 处理 /close_valve 请求
-  if (parsedUrl.pathname === '/close_valve') {
+  // 关闭水阀
+  if (parsedUrl.pathname === '/close_water_valve') {
     res.statusCode = 200;
     res.end(JSON.stringify({
       status: "ok",
-      message: "阀门已手动关闭"
+      message: "🔒 水阀已手动关闭"
+    }));
+    return;
+  }
+  
+  // ========== 肥阀控制 ==========
+  // 开启肥阀
+  if (parsedUrl.pathname === '/start_fert_valve') {
+    const duration = parsedUrl.query.duration || "30";
+    res.statusCode = 200;
+    res.end(JSON.stringify({
+      status: "ok",
+      message: `✅ 肥阀已开启，将在 ${duration} 分钟后自动关闭`,
+      type: "fert",
+      duration: duration
+    }));
+    return;
+  }
+  
+  // 关闭肥阀
+  if (parsedUrl.pathname === '/close_fert_valve') {
+    res.statusCode = 200;
+    res.end(JSON.stringify({
+      status: "ok",
+      message: "🔒 肥阀已手动关闭"
     }));
     return;
   }
